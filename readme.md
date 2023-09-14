@@ -39,7 +39,7 @@ vkMacQuake shows basic usage of the API. For example it demonstrates render pass
 To compile vkMacQuake, first install the build dependencies with Homebrew:
 
 ~~~
-brew install molten-vk vulkan-headers glslang spirv-tools sdl2 libvorbis flac opus opusfile flac mad meson pkgconfig
+brew install molten-vk vulkan-headers glslang spirv-tools sdl2 libvorbis flac opus opusfile mad meson pkgconfig
 ~~~
 
 Then clone the vkMacQuake repo:
