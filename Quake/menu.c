@@ -1758,7 +1758,7 @@ static void M_GraphicsOptions_AdjustSliders (int dir, qboolean mouse)
 	switch (graphics_options_cursor)
 	{
 	case GRAPHICS_OPT_GAMMA:
-		f = M_GetSliderPos (0.5, 1, vid_gamma.value, true, mouse, clamped_mouse, dir, 0.05, 999);
+		f = M_GetSliderPos (0.1, 1, vid_gamma.value, true, mouse, clamped_mouse, dir, 0.01, 999);
 		Cvar_SetValue ("gamma", f);
 		break;
 	case GRAPHICS_OPT_CONTRAST:

@@ -1,4 +1,4 @@
-project('vkquake', 'c', default_options : ['c_std=gnu11', 'buildtype=release'])
+project('vkmacquake', 'c', default_options : ['buildtype=release'])
 
 shaders = [
     'Shaders/alias.frag',
@@ -222,4 +222,4 @@ if get_option('do_userdirs').enabled()
     cflags += '-DDO_USERDIRS=1'
 endif
 
-executable('vkquake', [srcs, shaders_c], dependencies : deps, c_args : cflags, c_pch: ['Quake/quakedef.h', 'Quake/quakedef.c'])
+executable('vkmacquake', [srcs, shaders_c], dependencies : deps, c_args : cflags, c_pch: ['Quake/quakedef.h', 'Quake/quakedef.c'])

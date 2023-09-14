@@ -29,9 +29,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "resource.h"
 #include "palette.h"
-#include "SDL.h"
-#include "SDL_syswm.h"
-#include "SDL_vulkan.h"
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_syswm.h>
+#include <SDL2/SDL_vulkan.h>
 #include "menu.h"
 #ifdef _WIN32
 #include <vulkan/vulkan_win32.h>

@@ -1,5 +1,4 @@
-INPUT := gfx/conback.lmp \
-	gfx/mainmenu2.lmp \
+INPUT := gfx/mainmenu2.lmp \
 	gfx/p_mods.lmp \
 	maps/e1m1@c49d.ent \
 	maps/e1m2@0caa.ent \
@@ -25,10 +24,10 @@ $(OUTPUT): mkpak $(INPUT)
 	./mkpak $(OUTPUT) $(INPUT)
 
 mkpak: mkpak.c
-	cc mkpak.c -o mkpak --std=gnu11 -g
+	cc mkpak.c -o mkpak -g
 
 bintoc: ../../Shaders/bintoc.c
-	cc ../../Shaders/bintoc.c -o bintoc --std=gnu11 -g
+	cc ../../Shaders/bintoc.c -o bintoc -g
 
 .PHONY: clean
 clean:
