@@ -83,7 +83,7 @@ static void GL_DestroyRenderResources (void);
 viddef_t		vid; // global video state
 modestate_t		modestate = MS_UNINIT;
 extern qboolean scr_initialized;
-extern cvar_t	r_particles, host_maxfps, r_gpulightmapupdate, r_showtris, r_showbboxes, r_rtshadows, r_md5models, r_lerpmodels, scr_fov;
+extern cvar_t	r_particles, host_maxfps, r_gpulightmapupdate, r_showtris, r_showbboxes, r_md5models, r_lerpmodels, scr_fov;
 
 extern VkAccelerationStructureKHR bmodel_tlas;
 
@@ -108,7 +108,6 @@ cvar_t		  r_usesops = {"r_usesops", "1", CVAR_ARCHIVE};		// johnfitz
 #if defined(_DEBUG)
 static cvar_t r_raydebug = {"r_raydebug", "0", 0};
 #endif
-extern cvar_t r_rtshadows;
 
 static VkInstance				vulkan_instance;
 static VkPhysicalDevice			vulkan_physical_device;
@@ -891,7 +890,6 @@ static void GL_InitDevice (void)
 	vulkan_globals.full_screen_exclusive = false;
 	vulkan_globals.swap_chain_full_screen_acquired = false;
 	vulkan_globals.screen_effects_sops = false;
-	vulkan_globals.ray_query = false;
 
 	vkGetPhysicalDeviceMemoryProperties (vulkan_physical_device, &vulkan_globals.memory_properties);
 	vkGetPhysicalDeviceProperties (vulkan_physical_device, &vulkan_globals.device_properties);
@@ -919,8 +917,6 @@ static void GL_InitDevice (void)
 			if (strcmp (VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				vulkan_globals.full_screen_exclusive = true;
 #endif
-			if (strcmp (VK_KHR_RAY_QUERY_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
-				vulkan_globals.ray_query = true;
 		}
 
 		Mem_Free (device_extensions);
@@ -1001,7 +997,6 @@ static void GL_InitDevice (void)
 	ZEROED_STRUCT (VkPhysicalDeviceSubgroupSizeControlFeaturesEXT, subgroup_size_control_features);
 	ZEROED_STRUCT (VkPhysicalDeviceBufferDeviceAddressFeaturesKHR, buffer_device_address_features);
 	ZEROED_STRUCT (VkPhysicalDeviceAccelerationStructureFeaturesKHR, acceleration_structure_features);
-	ZEROED_STRUCT (VkPhysicalDeviceRayQueryFeaturesKHR, ray_query_features);
 	memset (&vulkan_globals.physical_device_acceleration_structure_properties, 0, sizeof (vulkan_globals.physical_device_acceleration_structure_properties));
 	if (vulkan_globals.vulkan_1_1_available)
 	{
@@ -1016,11 +1011,6 @@ static void GL_InitDevice (void)
 			physical_device_subgroup_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
 			CHAIN_PNEXT (device_properties_next, physical_device_subgroup_properties);
 		}
-		if (vulkan_globals.ray_query)
-		{
-			vulkan_globals.physical_device_acceleration_structure_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
-			CHAIN_PNEXT (device_properties_next, vulkan_globals.physical_device_acceleration_structure_properties);
-		}
 
 		fpGetPhysicalDeviceProperties2 (vulkan_physical_device, &physical_device_properties_2);
 
@@ -1032,15 +1022,6 @@ static void GL_InitDevice (void)
 		{
 			subgroup_size_control_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT;
 			CHAIN_PNEXT (device_features_next, subgroup_size_control_features);
-		}
-		if (vulkan_globals.ray_query)
-		{
-			buffer_device_address_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
-			CHAIN_PNEXT (device_features_next, buffer_device_address_features);
-			acceleration_structure_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
-			CHAIN_PNEXT (device_features_next, acceleration_structure_features);
-			ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
-			CHAIN_PNEXT (device_features_next, ray_query_features);
 		}
 
 		fpGetPhysicalDeviceFeatures2 (vulkan_physical_device, &physical_device_features_2);
@@ -1060,13 +1041,9 @@ static void GL_InitDevice (void)
 		// Shader only supports subgroup sizes from 4 to 64. 128 can't be supported because Vulkan spec states that workgroup size
 		// in x dimension must be a multiple of the subgroup size for VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT.
 		&& (physical_device_subgroup_size_control_properties.minSubgroupSize >= 4) && (physical_device_subgroup_size_control_properties.maxSubgroupSize <= 64);
+    
 	if (vulkan_globals.screen_effects_sops)
 		Con_Printf ("Using subgroup operations\n");
-
-	vulkan_globals.ray_query = vulkan_globals.ray_query && acceleration_structure_features.accelerationStructure && ray_query_features.rayQuery &&
-							   buffer_device_address_features.bufferDeviceAddress;
-	if (vulkan_globals.ray_query)
-		Con_Printf ("Using ray queries\n");
 
 	const char *device_extensions[32] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 	uint32_t	numEnabledExtensions = 1;
@@ -1081,17 +1058,6 @@ static void GL_InitDevice (void)
 	if (vulkan_globals.full_screen_exclusive)
 		device_extensions[numEnabledExtensions++] = VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME;
 #endif
-	if (vulkan_globals.ray_query)
-	{
-		device_extensions[numEnabledExtensions++] = VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME;
-		device_extensions[numEnabledExtensions++] = VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME;
-		device_extensions[numEnabledExtensions++] = VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
-		device_extensions[numEnabledExtensions++] = VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME;
-		device_extensions[numEnabledExtensions++] = VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME;
-		device_extensions[numEnabledExtensions++] = VK_KHR_SPIRV_1_4_EXTENSION_NAME;
-		device_extensions[numEnabledExtensions++] = VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME;
-		device_extensions[numEnabledExtensions++] = VK_KHR_RAY_QUERY_EXTENSION_NAME;
-	}
 
 	const VkBool32 extended_format_support = vulkan_globals.device_features.shaderStorageImageExtendedFormats;
 	const VkBool32 sampler_anisotropic = vulkan_globals.device_features.samplerAnisotropy;
@@ -1109,14 +1075,10 @@ static void GL_InitDevice (void)
 	ZEROED_STRUCT (VkDeviceCreateInfo, device_create_info);
 	device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 	void **device_create_info_next = (void **)&device_create_info.pNext;
+    
 	if (vulkan_globals.screen_effects_sops)
 		CHAIN_PNEXT (device_create_info_next, subgroup_size_control_features);
-	if (vulkan_globals.ray_query)
-	{
-		CHAIN_PNEXT (device_create_info_next, buffer_device_address_features);
-		CHAIN_PNEXT (device_create_info_next, acceleration_structure_features);
-		CHAIN_PNEXT (device_create_info_next, ray_query_features);
-	}
+
 	device_create_info.queueCreateInfoCount = 1;
 	device_create_info.pQueueCreateInfos = &queue_create_info;
 	device_create_info.enabledExtensionCount = numEnabledExtensions;
@@ -1144,14 +1106,7 @@ static void GL_InitDevice (void)
 		GET_DEVICE_PROC_ADDR (ReleaseFullScreenExclusiveModeEXT);
 	}
 #endif
-	if (vulkan_globals.ray_query)
-	{
-		GET_GLOBAL_DEVICE_PROC_ADDR (vk_get_buffer_device_address, vkGetBufferDeviceAddressKHR);
-		GET_GLOBAL_DEVICE_PROC_ADDR (vk_get_acceleration_structure_build_sizes, vkGetAccelerationStructureBuildSizesKHR);
-		GET_GLOBAL_DEVICE_PROC_ADDR (vk_create_acceleration_structure, vkCreateAccelerationStructureKHR);
-		GET_GLOBAL_DEVICE_PROC_ADDR (vk_destroy_acceleration_structure, vkDestroyAccelerationStructureKHR);
-		GET_GLOBAL_DEVICE_PROC_ADDR (vk_cmd_build_acceleration_structures, vkCmdBuildAccelerationStructuresKHR);
-	}
+
 #ifdef _DEBUG
 	if (vulkan_globals.debug_utils)
 	{
@@ -1877,39 +1832,6 @@ void GL_UpdateDescriptorSets (void)
 	screen_effects_writes[4].pBufferInfo = &palette_octree_info;
 
 	vkUpdateDescriptorSets (vulkan_globals.device, countof (screen_effects_writes), screen_effects_writes, 0, NULL);
-
-#if defined(_DEBUG)
-	if (vulkan_globals.ray_query)
-	{
-		if (vulkan_globals.ray_debug_desc_set != VK_NULL_HANDLE)
-			R_FreeDescriptorSet (vulkan_globals.ray_debug_desc_set, &vulkan_globals.ray_debug_set_layout);
-		vulkan_globals.ray_debug_desc_set = R_AllocateDescriptorSet (&vulkan_globals.ray_debug_set_layout);
-
-		ZEROED_STRUCT_ARRAY (VkWriteDescriptorSet, ray_debug_writes, 2);
-
-		ray_debug_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		ray_debug_writes[0].dstBinding = 0;
-		ray_debug_writes[0].dstArrayElement = 0;
-		ray_debug_writes[0].descriptorCount = 1;
-		ray_debug_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-		ray_debug_writes[0].dstSet = vulkan_globals.ray_debug_desc_set;
-		ray_debug_writes[0].pImageInfo = &output_image_info;
-
-		ZEROED_STRUCT (VkWriteDescriptorSetAccelerationStructureKHR, acceleration_structure_write);
-		acceleration_structure_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-		acceleration_structure_write.accelerationStructureCount = 1;
-		acceleration_structure_write.pAccelerationStructures = &bmodel_tlas;
-		ray_debug_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		ray_debug_writes[1].pNext = &acceleration_structure_write;
-		ray_debug_writes[1].dstBinding = 1;
-		ray_debug_writes[1].dstArrayElement = 0;
-		ray_debug_writes[1].descriptorCount = 1;
-		ray_debug_writes[1].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-		ray_debug_writes[1].dstSet = vulkan_globals.ray_debug_desc_set;
-
-		vkUpdateDescriptorSets (vulkan_globals.device, countof (ray_debug_writes), ray_debug_writes, 0, NULL);
-	}
-#endif
 }
 
 /*

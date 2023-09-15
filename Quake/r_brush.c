@@ -25,7 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 
-extern cvar_t gl_fullbrights, r_drawflat, r_gpulightmapupdate, r_rtshadows;
+extern cvar_t gl_fullbrights, r_drawflat, r_gpulightmapupdate;
 
 int gl_lightmap_format;
 
@@ -1752,8 +1752,7 @@ void GL_UpdateLightmapDescriptorSets (void)
 {
 	GL_WaitForDeviceIdle ();
 
-	const qboolean			  rt = vulkan_globals.ray_query && r_rtshadows.value && (bmodel_tlas != VK_NULL_HANDLE);
-	vulkan_desc_set_layout_t *set_layout = rt ? &vulkan_globals.lightmap_compute_rt_set_layout : &vulkan_globals.lightmap_compute_set_layout;
+	vulkan_desc_set_layout_t *set_layout = &vulkan_globals.lightmap_compute_set_layout;
 
 	if (lightmap_count && !lightmaps[0].texture->target_image_view)
 		return;
@@ -1873,19 +1872,6 @@ void GL_UpdateLightmapDescriptorSets (void)
 		writes[7].pBufferInfo = &world_vertex_buffer_info;
 
 		ZEROED_STRUCT (VkWriteDescriptorSetAccelerationStructureKHR, acceleration_structure_write);
-		if (rt)
-		{
-			acceleration_structure_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-			acceleration_structure_write.accelerationStructureCount = 1;
-			acceleration_structure_write.pAccelerationStructures = &bmodel_tlas;
-			writes[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			writes[8].pNext = &acceleration_structure_write;
-			writes[8].dstBinding = num_writes++;
-			writes[8].dstArrayElement = 0;
-			writes[8].descriptorCount = 1;
-			writes[8].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-			writes[8].dstSet = lm->descriptor_set;
-		}
 
 		vkUpdateDescriptorSets (vulkan_globals.device, num_writes, writes, 0, NULL);
 	}
@@ -2098,8 +2084,6 @@ void GL_BuildBModelVertexBuffer (void)
 	}
 
 	VkImageUsageFlags usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-	if (vulkan_globals.ray_query)
-		usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
 	// Allocate & upload to GPU
 	R_CreateBuffer (
@@ -2107,267 +2091,6 @@ void GL_BuildBModelVertexBuffer (void)
 		&bmodel_vertex_buffer_device_address, "BModel vertices");
 	R_StagingUploadBuffer (bmodel_vertex_buffer, varray_bytes, (byte *)varray);
 	TEMP_FREE (varray);
-}
-
-/*
-==================
-GL_BuildBModelAccelerationStructures
-==================
-*/
-void GL_BuildBModelAccelerationStructures (void)
-{
-	VkResult err;
-
-	if (!vulkan_globals.ray_query || !r_rtshadows.value || (bmodel_tlas != VK_NULL_HANDLE))
-		return;
-
-	// count all tris in all models
-	uint32_t total_num_triangles = 0;
-	TEMP_ALLOC_ZEROED (uint32_t, blas_num_tris, MAX_MODELS);
-	TEMP_ALLOC_ZEROED (VkAccelerationStructureGeometryKHR, blas_geometries, MAX_MODELS);
-	TEMP_ALLOC_ZEROED (VkAccelerationStructureBuildGeometryInfoKHR, blas_geometry_infos, MAX_MODELS);
-	TEMP_ALLOC_ZEROED (VkAccelerationStructureBuildSizesInfoKHR, blas_sizes_infos, MAX_MODELS);
-	TEMP_ALLOC_ZEROED (qmodel_t *, blas_models, MAX_MODELS);
-	TEMP_ALLOC_ZEROED (buffer_create_info_t, buffer_create_infos, 3 + MAX_MODELS);
-
-	size_t scratch_buffer_size = 0;
-	int	   num_blas = 0;
-	for (int j = 1; j < MAX_MODELS; j++)
-	{
-		qmodel_t *m = cl.model_precache[j];
-		if (!m || m->type != mod_brush)
-			continue;
-		if (m->flags & MF_HOLEY)
-			continue;
-
-		for (int i = m->firstmodelsurface; i < m->firstmodelsurface + m->nummodelsurfaces; i++)
-		{
-			msurface_t *s = &m->surfaces[i];
-			if ((s->flags & ~SURF_PLANEBACK) != 0)
-				continue;
-			total_num_triangles += m->surfaces[i].numedges - 2;
-			blas_num_tris[num_blas] += m->surfaces[i].numedges - 2;
-		}
-		if (blas_num_tris[num_blas] == 0)
-			continue;
-
-		blas_models[num_blas] = m;
-
-		VkAccelerationStructureGeometryKHR *blas_geometry = &blas_geometries[num_blas];
-		blas_geometry->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-		blas_geometry->geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-		blas_geometry->geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-		blas_geometry->geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-		blas_geometry->geometry.triangles.vertexStride = 28;
-		blas_geometry->geometry.triangles.maxVertex = bmodel_numverts;
-		blas_geometry->geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
-
-		VkAccelerationStructureBuildGeometryInfoKHR *blas_geometry_info = &blas_geometry_infos[num_blas];
-		blas_geometry_info->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-		blas_geometry_info->type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-		blas_geometry_info->flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-		blas_geometry_info->mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-		blas_geometry_info->geometryCount = 1;
-		blas_geometry_info->pGeometries = blas_geometry;
-
-		VkAccelerationStructureBuildSizesInfoKHR *blas_build_sizes_info = &blas_sizes_infos[num_blas];
-		blas_build_sizes_info->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-		vulkan_globals.vk_get_acceleration_structure_build_sizes (
-			vulkan_globals.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, blas_geometry_info, &blas_num_tris[num_blas], blas_build_sizes_info);
-
-		scratch_buffer_size = q_max (scratch_buffer_size, blas_build_sizes_info->buildScratchSize);
-		++num_blas;
-	}
-
-	if (num_blas == 0)
-	{
-		TEMP_FREE (blas_num_tris);
-		TEMP_FREE (blas_geometries);
-		TEMP_FREE (blas_geometry_infos);
-		TEMP_FREE (blas_sizes_infos);
-		TEMP_FREE (blas_models);
-		TEMP_FREE (buffer_create_infos);
-		return;
-	}
-
-	ZEROED_STRUCT (VkAccelerationStructureGeometryKHR, tlas_geometry);
-	ZEROED_STRUCT (VkAccelerationStructureBuildGeometryInfoKHR, tlas_geometry_info);
-	ZEROED_STRUCT (VkAccelerationStructureBuildSizesInfoKHR, tlas_build_sizes_info);
-	{
-		const uint32_t num_instances = MAX_MODELS;
-
-		tlas_geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-		tlas_geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-		tlas_geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-
-		tlas_geometry_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-		tlas_geometry_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-		tlas_geometry_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-		tlas_geometry_info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-		tlas_geometry_info.geometryCount = 1;
-		tlas_geometry_info.pGeometries = &tlas_geometry;
-
-		tlas_build_sizes_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-		vulkan_globals.vk_get_acceleration_structure_build_sizes (
-			vulkan_globals.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &tlas_geometry_info, &num_instances, &tlas_build_sizes_info);
-
-		scratch_buffer_size = q_max (scratch_buffer_size, tlas_build_sizes_info.buildScratchSize);
-		bmodel_tlas_size = tlas_build_sizes_info.accelerationStructureSize;
-	}
-
-	const size_t indices_size = total_num_triangles * 3 * sizeof (uint32_t);
-
-	buffer_create_infos[0].buffer = &bmodel_indices_buffer;
-	buffer_create_infos[0].size = indices_size;
-	buffer_create_infos[0].usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-	buffer_create_infos[0].address = &bmodel_indices_device_address;
-	buffer_create_infos[0].name = "BModel indices";
-
-	buffer_create_infos[1].buffer = &bmodel_tlas_buffer;
-	buffer_create_infos[1].size = tlas_build_sizes_info.accelerationStructureSize;
-	buffer_create_infos[1].usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
-	buffer_create_infos[1].name = "BModel TLAS";
-
-	buffer_create_infos[2].buffer = &bmodel_scratch_buffer;
-	buffer_create_infos[2].size = scratch_buffer_size;
-	buffer_create_infos[2].usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-	buffer_create_infos[2].address = &bmodel_scratch_address;
-	buffer_create_infos[2].alignment = vulkan_globals.physical_device_acceleration_structure_properties.minAccelerationStructureScratchOffsetAlignment;
-	buffer_create_infos[2].name = "BModel AS build scratch";
-
-	for (int i = 0; i < num_blas; ++i)
-	{
-		buffer_create_info_t *create_info = &buffer_create_infos[3 + i];
-		create_info->buffer = &blas_models[i]->blas_buffer;
-		create_info->size = blas_sizes_infos[i].accelerationStructureSize;
-		create_info->usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
-		create_info->address = &blas_models[i]->blas_address;
-		create_info->name = "BModel BLAS";
-	}
-
-	const size_t total_as_device_size = R_CreateBuffers (
-		3 + num_blas, buffer_create_infos, &bmodel_as_device_memory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, &num_vulkan_bmodel_allocations, "BModel AS");
-
-	Sys_Printf ("Allocating acceleration structure data (%u KB)\n", (int)(total_as_device_size / 1024ull));
-
-	{
-		ZEROED_STRUCT (VkAccelerationStructureCreateInfoKHR, acceleration_structure_create_info);
-		acceleration_structure_create_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-		acceleration_structure_create_info.buffer = bmodel_tlas_buffer;
-		acceleration_structure_create_info.size = bmodel_tlas_size;
-		acceleration_structure_create_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-		err = vulkan_globals.vk_create_acceleration_structure (vulkan_globals.device, &acceleration_structure_create_info, NULL, &bmodel_tlas);
-		if (err != VK_SUCCESS)
-			Sys_Error ("vkCreateAccelerationStructure failed");
-	}
-
-	VkBuffer		staging_buffer;
-	VkCommandBuffer command_buffer;
-	int				staging_offset;
-	unsigned char  *staging_memory = R_StagingAllocate (indices_size, 1, &command_buffer, &staging_buffer, &staging_offset);
-
-	{
-		ZEROED_STRUCT (VkBufferCopy, region);
-		region.srcOffset = staging_offset;
-		region.dstOffset = 0;
-		region.size = indices_size;
-		vkCmdCopyBuffer (command_buffer, staging_buffer, bmodel_indices_buffer, 1, &region);
-
-		ZEROED_STRUCT (VkMemoryBarrier, memory_barrier);
-		memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-		memory_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-		memory_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-		vulkan_globals.vk_cmd_pipeline_barrier (
-			command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &memory_barrier, 0, NULL, 0, NULL);
-	}
-
-	size_t scratch_offset = 0;
-	size_t indices_offsets = 0;
-	for (int i = 0; i < num_blas; ++i)
-	{
-		scratch_offset =
-			q_align (scratch_offset, vulkan_globals.physical_device_acceleration_structure_properties.minAccelerationStructureScratchOffsetAlignment);
-
-		if ((scratch_offset + blas_sizes_infos[i].buildScratchSize) > scratch_buffer_size)
-		{
-			ZEROED_STRUCT (VkMemoryBarrier, memory_barrier);
-			memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-			memory_barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-			memory_barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-			vulkan_globals.vk_cmd_pipeline_barrier (
-				command_buffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1,
-				&memory_barrier, 0, NULL, 0, NULL);
-			scratch_offset = 0;
-		}
-
-		ZEROED_STRUCT (VkAccelerationStructureCreateInfoKHR, acceleration_structure_create_info);
-		acceleration_structure_create_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-		acceleration_structure_create_info.buffer = blas_models[i]->blas_buffer;
-		acceleration_structure_create_info.size = blas_sizes_infos[i].accelerationStructureSize;
-		acceleration_structure_create_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-		err = vulkan_globals.vk_create_acceleration_structure (vulkan_globals.device, &acceleration_structure_create_info, NULL, &blas_models[i]->blas);
-		if (err != VK_SUCCESS)
-			Sys_Error ("vkCreateAccelerationStructure failed");
-
-		ZEROED_STRUCT (VkAccelerationStructureBuildRangeInfoKHR, build_range_info);
-		build_range_info.primitiveCount = blas_num_tris[i];
-		VkAccelerationStructureBuildGeometryInfoKHR *blas_geometry_info = &blas_geometry_infos[i];
-		blas_geometry_info->dstAccelerationStructure = blas_models[i]->blas;
-		blas_geometry_info->scratchData.deviceAddress = bmodel_scratch_address + scratch_offset;
-		VkAccelerationStructureGeometryKHR *blas_geometry = &blas_geometries[i];
-		blas_geometry->geometry.triangles.vertexData.deviceAddress = bmodel_vertex_buffer_device_address;
-		blas_geometry->geometry.triangles.indexData.deviceAddress = bmodel_indices_device_address + indices_offsets;
-		const VkAccelerationStructureBuildRangeInfoKHR *build_range_info_ptr = &build_range_info;
-		vulkan_globals.vk_cmd_build_acceleration_structures (command_buffer, 1, blas_geometry_info, &build_range_info_ptr);
-
-		scratch_offset += blas_sizes_infos[i].buildScratchSize;
-		indices_offsets += blas_num_tris[i] * 3 * sizeof (uint32_t);
-	}
-
-	{
-		ZEROED_STRUCT (VkMemoryBarrier, memory_barrier);
-		memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-		memory_barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-		memory_barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-		vulkan_globals.vk_cmd_pipeline_barrier (
-			command_buffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1,
-			&memory_barrier, 0, NULL, 0, NULL);
-	}
-
-	TEMP_FREE (blas_num_tris);
-	TEMP_FREE (blas_geometries);
-	TEMP_FREE (blas_geometry_infos);
-	TEMP_FREE (blas_sizes_infos);
-	TEMP_FREE (blas_models);
-	TEMP_FREE (buffer_create_infos);
-
-	uint32_t *indices = (uint32_t *)staging_memory;
-	uint32_t  current_index = 0;
-	R_StagingBeginCopy ();
-
-	for (int j = 1; j < MAX_MODELS; j++)
-	{
-		qmodel_t *m = cl.model_precache[j];
-		if (!m || m->type != mod_brush)
-			continue;
-		if (m->flags & MF_HOLEY)
-			continue;
-
-		for (int i = m->firstmodelsurface; i < m->firstmodelsurface + m->nummodelsurfaces; i++)
-		{
-			msurface_t *s = &m->surfaces[i];
-			if ((s->flags & ~SURF_PLANEBACK) != 0)
-				continue;
-
-			for (int k = 2; k < s->numedges; ++k)
-			{
-				indices[current_index++] = s->vbo_firstvert;
-				indices[current_index++] = s->vbo_firstvert + k - 1;
-				indices[current_index++] = s->vbo_firstvert + k;
-			}
-		}
-	}
-	R_StagingEndCopy ();
 }
 
 /*
@@ -2901,8 +2624,7 @@ void R_FlushUpdateLightmaps (
 	byte lightmap_regions[UPDATE_LIGHTMAP_BATCH_SIZE][LMBLOCK_HEIGHT / LM_CULL_BLOCK_H][LMBLOCK_WIDTH / LM_CULL_BLOCK_W], int current_dlights,
 	int cached_dlights)
 {
-	vulkan_pipeline_t *pipeline =
-		(r_rtshadows.value && (bmodel_tlas != VK_NULL_HANDLE)) ? &vulkan_globals.update_lightmap_rt_pipeline : &vulkan_globals.update_lightmap_pipeline;
+	vulkan_pipeline_t *pipeline = &vulkan_globals.update_lightmap_pipeline;
 
 	vkCmdPipelineBarrier (
 		cbx->cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, num_batch_lightmaps, pre_barriers);

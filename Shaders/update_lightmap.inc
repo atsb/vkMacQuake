@@ -61,9 +61,6 @@ layout (std430, set = 0, binding = 7) readonly restrict buffer world_verts_buffe
 {
 	world_vert_t world_verts[];
 };
-#ifdef RAY_QUERIES
-layout (set = 0, binding = 8) uniform accelerationStructureEXT tlas;
-#endif
 
 layout (constant_id = 0) const bool scaled_lm = false;
 
@@ -81,17 +78,6 @@ bool TestSphereAABB (light_t light, vec3 mins, vec3 maxs)
 	}
 	return sq_dist <= light.radius * light.radius;
 }
-
-#ifdef RAY_QUERIES
-bool IsOccluded (vec3 origin, vec3 direction, float dist)
-{
-	rayQueryEXT ray_query;
-	rayQueryInitializeEXT (
-		ray_query, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT, 0xFF, origin, 0.01f, direction, dist);
-	rayQueryProceedEXT (ray_query);
-	return rayQueryGetIntersectionTypeEXT (ray_query, true) == gl_RayQueryCommittedIntersectionTriangleEXT;
-}
-#endif
 
 vec3 CalculateWorldPos (const surface_t surf, const float s, const float t, inout vec3 tangent, inout vec3 bitangent)
 {
@@ -232,23 +218,6 @@ void main ()
 					continue;
 
 				float occlusion = 1.0f;
-#ifdef RAY_QUERIES
-				// TODO: Quality settings
-				const int NUM_SAMPLES = 2;
-				for (int y = 0; y < NUM_SAMPLES; ++y)
-				{
-					for (int x = 0; x < NUM_SAMPLES; ++x)
-					{
-						const float offset_s = (x * (1.0f / NUM_SAMPLES)) + (0.5f / NUM_SAMPLES);
-						const float offset_t = (y * (1.0f / NUM_SAMPLES)) + (0.5f / NUM_SAMPLES);
-						const vec3	pos = world_pos + (offset_s * tangent) + (offset_t * bitangent);
-						const vec3	light_vec = pos - light.origin;
-						const float light_dist = length (light_vec);
-						if (IsOccluded (light.origin, normalize (light_vec), light_dist - 1e-2f))
-							occlusion -= 1.0f / float (NUM_SAMPLES * NUM_SAMPLES);
-					}
-				}
-#endif
 
 				const float brightness = (light.radius - dist) / 256.0f;
 				light_accumulated.xyz += brightness * max (occlusion, 0.0f) * light.color;

@@ -111,7 +111,6 @@ extern cvar_t scr_fov;
 extern cvar_t scr_showfps;
 extern cvar_t scr_style;
 extern cvar_t autoload;
-extern cvar_t r_rtshadows;
 extern cvar_t r_particles;
 extern cvar_t r_md5models;
 extern cvar_t r_lerpmodels;
@@ -1629,13 +1628,12 @@ enum
 	GRAPHICS_OPT_MODELS,
 	GRAPHICS_OPT_MODEL_INTERPOLATION,
 	GRAPHICS_OPT_PARTICLES,
-	GRAPHICS_OPT_SHADOWS,
 	GRAPHICS_OPTIONS_ITEMS,
 };
 
 static int M_GraphicsOptions_NumItems ()
 {
-	return GRAPHICS_OPTIONS_ITEMS - (vulkan_globals.ray_query ? 0 : 1);
+    return GRAPHICS_OPTIONS_ITEMS;
 }
 
 static int graphics_options_cursor = 0;
@@ -1806,10 +1804,6 @@ static void M_GraphicsOptions_AdjustSliders (int dir, qboolean mouse)
 	case GRAPHICS_OPT_PARTICLES:
 		M_GraphicsOptions_ChooseNextParticles (dir);
 		break;
-	case GRAPHICS_OPT_SHADOWS:
-		if (vulkan_globals.ray_query)
-			Cvar_SetValueQuick (&r_rtshadows, (float)(((int)r_rtshadows.value + 2 + dir) % 2));
-		break;
 	}
 }
 
@@ -1922,12 +1916,6 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 	M_Print (
 		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_PARTICLES,
 		((int)r_particles.value == 0) ? "off" : (((int)r_particles.value == 2) ? "Classic" : "glQuake"));
-
-	if (vulkan_globals.ray_query)
-	{
-		M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SHADOWS, "Dynamic Shadows");
-		M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SHADOWS, r_rtshadows.value);
-	}
 
 	// cursor
 	M_Mouse_UpdateListCursor (&graphics_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, M_GraphicsOptions_NumItems (), 0);

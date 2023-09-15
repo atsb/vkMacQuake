@@ -264,7 +264,6 @@ typedef struct
 	// Device extensions
 	qboolean dedicated_allocation;
 	qboolean full_screen_exclusive;
-	qboolean ray_query;
 
 	// Buffers
 	VkImage color_buffers[NUM_COLOR_BUFFERS];
@@ -579,7 +578,6 @@ void GL_UpdateLightmapDescriptorSets (void);
 void GL_DeleteBModelVertexBuffer (void);
 void GL_DeleteBModelAccelerationStructures (void);
 void GL_BuildBModelVertexBuffer (void);
-void GL_BuildBModelAccelerationStructures (void);
 void GL_PrepareSIMDAndParallelData (void);
 void GLMesh_UploadBuffers (qmodel_t *m, aliashdr_t *hdr, unsigned short *indexes, byte *vertexes, aliasmesh_t *desc, jointpose_t *joints);
 void GLMesh_DeleteAllMeshBuffers (void);

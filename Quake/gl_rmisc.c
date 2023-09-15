@@ -54,7 +54,6 @@ extern cvar_t gl_zfix; // QuakeSpasm z-fighting fix
 extern cvar_t r_alphasort;
 
 extern cvar_t r_gpulightmapupdate;
-extern cvar_t r_rtshadows;
 extern cvar_t r_indirect;
 extern cvar_t r_tasks;
 extern cvar_t r_parallelmark;
@@ -373,20 +372,6 @@ static void R_SetSlimealpha_f (cvar_t *var)
 	if (cls.signon == SIGNONS && cl.worldmodel && !(cl.worldmodel->contentstransparent & SURF_DRAWSLIME) && var->value && var->value < 1)
 		Con_Warning ("Map does not appear to be slime-vised\n");
 	map_slimealpha = var->value;
-}
-
-/*
-====================
-R_SetRTShadows_f
-====================
-*/
-static void R_SetRTShadows_f (cvar_t *var)
-{
-	if (var->value)
-		GL_BuildBModelAccelerationStructures ();
-	else
-		GL_DeleteBModelAccelerationStructures ();
-	GL_UpdateLightmapDescriptorSets ();
 }
 
 /*
@@ -896,11 +881,6 @@ static void R_InitDynamicStorageBuffers (void)
 {
 	VkBufferUsageFlags usage_flags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 	qboolean		   get_device_address = false;
-	if (vulkan_globals.ray_query)
-	{
-		usage_flags |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
-		get_device_address = true;
-	}
 
 	R_InitDynamicBuffers (dyn_storage_buffers, &dyn_storage_buffer_memory, &current_dyn_storage_buffer_size, usage_flags, get_device_address, "storage buffer");
 }
@@ -1407,27 +1387,6 @@ void R_CreateDescriptorSetLayouts ()
 		if (err != VK_SUCCESS)
 			Sys_Error ("vkCreateDescriptorSetLayout failed");
 		GL_SetObjectName ((uint64_t)vulkan_globals.lightmap_compute_set_layout.handle, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "lightmap compute");
-
-		if (vulkan_globals.ray_query)
-		{
-			lightmap_compute_layout_bindings[8].binding = num_descriptors++;
-			lightmap_compute_layout_bindings[8].descriptorCount = 1;
-			lightmap_compute_layout_bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-			lightmap_compute_layout_bindings[8].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-			descriptor_set_layout_create_info.bindingCount = num_descriptors;
-
-			vulkan_globals.lightmap_compute_rt_set_layout.num_storage_images = 1;
-			vulkan_globals.lightmap_compute_rt_set_layout.num_sampled_images = 1 + MAXLIGHTMAPS * 3 / 4;
-			vulkan_globals.lightmap_compute_rt_set_layout.num_storage_buffers = 3;
-			vulkan_globals.lightmap_compute_rt_set_layout.num_ubos_dynamic = 2;
-			vulkan_globals.lightmap_compute_rt_set_layout.num_acceleration_structures = 1;
-
-			err = vkCreateDescriptorSetLayout (
-				vulkan_globals.device, &descriptor_set_layout_create_info, NULL, &vulkan_globals.lightmap_compute_rt_set_layout.handle);
-			if (err != VK_SUCCESS)
-				Sys_Error ("vkCreateDescriptorSetLayout failed");
-			GL_SetObjectName ((uint64_t)vulkan_globals.lightmap_compute_rt_set_layout.handle, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "lightmap compute rt");
-		}
 	}
 
 	{
@@ -1460,32 +1419,6 @@ void R_CreateDescriptorSetLayouts ()
 			Sys_Error ("vkCreateDescriptorSetLayout failed");
 		GL_SetObjectName ((uint64_t)vulkan_globals.indirect_compute_set_layout.handle, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "indirect compute");
 	}
-
-#if defined(_DEBUG)
-	if (vulkan_globals.ray_query)
-	{
-		ZEROED_STRUCT_ARRAY (VkDescriptorSetLayoutBinding, ray_debug_layout_bindings, 2);
-		ray_debug_layout_bindings[0].binding = 0;
-		ray_debug_layout_bindings[0].descriptorCount = 1;
-		ray_debug_layout_bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-		ray_debug_layout_bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-		ray_debug_layout_bindings[1].binding = 1;
-		ray_debug_layout_bindings[1].descriptorCount = 1;
-		ray_debug_layout_bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-		ray_debug_layout_bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-		descriptor_set_layout_create_info.bindingCount = countof (ray_debug_layout_bindings);
-		descriptor_set_layout_create_info.pBindings = ray_debug_layout_bindings;
-
-		memset (&vulkan_globals.ray_debug_set_layout, 0, sizeof (vulkan_globals.ray_debug_set_layout));
-		vulkan_globals.ray_debug_set_layout.num_storage_images = 1;
-
-		err = vkCreateDescriptorSetLayout (vulkan_globals.device, &descriptor_set_layout_create_info, NULL, &vulkan_globals.ray_debug_set_layout.handle);
-		if (err != VK_SUCCESS)
-			Sys_Error ("vkCreateDescriptorSetLayout failed");
-		GL_SetObjectName ((uint64_t)vulkan_globals.screen_effects_set_layout.handle, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "ray debug");
-	}
-#endif
 }
 
 /*
@@ -1513,12 +1446,6 @@ void R_CreateDescriptorPool ()
 	pool_sizes[7].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 	pool_sizes[7].descriptorCount = 32;
 	int num_sizes = 8;
-	if (vulkan_globals.ray_query)
-	{
-		pool_sizes[8].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-		pool_sizes[8].descriptorCount = 32 + MAX_SANITY_LIGHTMAPS;
-		num_sizes = 9;
-	}
 
 	ZEROED_STRUCT (VkDescriptorPoolCreateInfo, descriptor_pool_create_info);
 	descriptor_pool_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1793,33 +1720,6 @@ void R_CreatePipelineLayouts ()
 		vulkan_globals.update_lightmap_pipeline.layout.push_constant_range = push_constant_range;
 	}
 
-	if (vulkan_globals.ray_query)
-	{
-		// Update lightmaps RT
-		VkDescriptorSetLayout update_lightmap_rt_descriptor_set_layouts[1] = {
-			vulkan_globals.lightmap_compute_rt_set_layout.handle,
-		};
-
-		ZEROED_STRUCT (VkPushConstantRange, push_constant_range);
-		push_constant_range.offset = 0;
-		push_constant_range.size = 6 * sizeof (uint32_t);
-		push_constant_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-		ZEROED_STRUCT (VkPipelineLayoutCreateInfo, pipeline_layout_create_info);
-		pipeline_layout_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipeline_layout_create_info.setLayoutCount = 1;
-		pipeline_layout_create_info.pSetLayouts = update_lightmap_rt_descriptor_set_layouts;
-		pipeline_layout_create_info.pushConstantRangeCount = 1;
-		pipeline_layout_create_info.pPushConstantRanges = &push_constant_range;
-
-		err = vkCreatePipelineLayout (vulkan_globals.device, &pipeline_layout_create_info, NULL, &vulkan_globals.update_lightmap_rt_pipeline.layout.handle);
-		if (err != VK_SUCCESS)
-			Sys_Error ("vkCreatePipelineLayout failed");
-		GL_SetObjectName (
-			(uint64_t)vulkan_globals.update_lightmap_rt_pipeline.layout.handle, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "update_lightmap_rt_pipeline_layout");
-		vulkan_globals.update_lightmap_rt_pipeline.layout.push_constant_range = push_constant_range;
-	}
-
 	{
 		// Indirect draw
 		VkDescriptorSetLayout indirect_draw_descriptor_set_layouts[1] = {
@@ -1850,34 +1750,6 @@ void R_CreatePipelineLayouts ()
 		GL_SetObjectName ((uint64_t)vulkan_globals.indirect_clear_pipeline.layout.handle, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "indirect_clear_pipeline_layout");
 		vulkan_globals.indirect_clear_pipeline.layout.push_constant_range = push_constant_range;
 	}
-
-#if defined(_DEBUG)
-	if (vulkan_globals.ray_query)
-	{
-		// Ray debug
-		VkDescriptorSetLayout ray_debug_descriptor_set_layouts[1] = {
-			vulkan_globals.ray_debug_set_layout.handle,
-		};
-
-		ZEROED_STRUCT (VkPushConstantRange, push_constant_range);
-		push_constant_range.offset = 0;
-		push_constant_range.size = 15 * sizeof (float);
-		push_constant_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-		ZEROED_STRUCT (VkPipelineLayoutCreateInfo, pipeline_layout_create_info);
-		pipeline_layout_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipeline_layout_create_info.setLayoutCount = 1;
-		pipeline_layout_create_info.pSetLayouts = ray_debug_descriptor_set_layouts;
-		pipeline_layout_create_info.pushConstantRangeCount = 1;
-		pipeline_layout_create_info.pPushConstantRanges = &push_constant_range;
-
-		err = vkCreatePipelineLayout (vulkan_globals.device, &pipeline_layout_create_info, NULL, &vulkan_globals.ray_debug_pipeline.layout.handle);
-		if (err != VK_SUCCESS)
-			Sys_Error ("vkCreatePipelineLayout failed");
-		GL_SetObjectName ((uint64_t)vulkan_globals.ray_debug_pipeline.layout.handle, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "ray_debug_pipeline_layout");
-		vulkan_globals.ray_debug_pipeline.layout.push_constant_range = push_constant_range;
-	}
-#endif
 }
 
 /*
@@ -2478,40 +2350,6 @@ static void R_CreateParticlesPipelines ()
 		Sys_Error ("vkCreateGraphicsPipelines failed");
 	vulkan_globals.particle_pipeline.layout = vulkan_globals.basic_pipeline_layout;
 	GL_SetObjectName ((uint64_t)vulkan_globals.particle_pipeline.handle, VK_OBJECT_TYPE_PIPELINE, "particles");
-}
-
-/*
-===============
-R_CreateRayDebugPipelines
-===============
-*/
-static void R_CreateRayDebugPipelines ()
-{
-#if defined(_DEBUG)
-	if (!vulkan_globals.ray_query)
-		return;
-
-	VkResult				err;
-	pipeline_create_infos_t infos;
-	R_InitDefaultStates (&infos);
-
-	ZEROED_STRUCT (VkPipelineShaderStageCreateInfo, compute_shader_stage);
-	compute_shader_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-	compute_shader_stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-	compute_shader_stage.module = ray_debug_comp_module;
-	compute_shader_stage.pName = "main";
-
-	memset (&infos.compute_pipeline, 0, sizeof (infos.compute_pipeline));
-	infos.compute_pipeline.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-	infos.compute_pipeline.stage = compute_shader_stage;
-	infos.compute_pipeline.layout = vulkan_globals.ray_debug_pipeline.layout.handle;
-
-	assert (vulkan_globals.ray_debug_pipeline.handle == VK_NULL_HANDLE);
-	err = vkCreateComputePipelines (vulkan_globals.device, VK_NULL_HANDLE, 1, &infos.compute_pipeline, NULL, &vulkan_globals.ray_debug_pipeline.handle);
-	if (err != VK_SUCCESS)
-		Sys_Error ("vkCreateComputePipelines failed (ray_debug_pipeline)");
-	GL_SetObjectName ((uint64_t)vulkan_globals.ray_debug_pipeline.handle, VK_OBJECT_TYPE_PIPELINE, "ray_debug_pipeline");
-#endif
 }
 
 /*
@@ -3277,19 +3115,6 @@ static void R_CreateUpdateLightmapPipelines ()
 	if (err != VK_SUCCESS)
 		Sys_Error ("vkCreateComputePipelines failed (update_lightmap_pipeline)");
 	GL_SetObjectName ((uint64_t)vulkan_globals.update_lightmap_pipeline.handle, VK_OBJECT_TYPE_PIPELINE, "update_lightmap");
-
-	if (vulkan_globals.ray_query)
-	{
-		compute_shader_stage.module = update_lightmap_rt_comp_module;
-		infos.compute_pipeline.stage = compute_shader_stage;
-		infos.compute_pipeline.layout = vulkan_globals.update_lightmap_rt_pipeline.layout.handle;
-		assert (vulkan_globals.update_lightmap_rt_pipeline.handle == VK_NULL_HANDLE);
-		err = vkCreateComputePipelines (
-			vulkan_globals.device, VK_NULL_HANDLE, 1, &infos.compute_pipeline, NULL, &vulkan_globals.update_lightmap_rt_pipeline.handle);
-		if (err != VK_SUCCESS)
-			Sys_Error ("vkCreateComputePipelines failed (update_lightmap_rt_pipeline)");
-		GL_SetObjectName ((uint64_t)vulkan_globals.update_lightmap_rt_pipeline.handle, VK_OBJECT_TYPE_PIPELINE, "update_lightmap_rt");
-	}
 }
 
 /*
@@ -3366,10 +3191,6 @@ static void R_CreateShaderModules ()
 	CREATE_SHADER_MODULE (showtris_vert);
 	CREATE_SHADER_MODULE (showtris_frag);
 	CREATE_SHADER_MODULE (update_lightmap_comp);
-	CREATE_SHADER_MODULE_COND (update_lightmap_rt_comp, vulkan_globals.ray_query);
-#ifdef _DEBUG
-	CREATE_SHADER_MODULE_COND (ray_debug_comp, vulkan_globals.ray_query);
-#endif
 }
 
 /*
@@ -3438,8 +3259,6 @@ void R_CreatePipelines ()
 	R_CreateScreenEffectsPipelines ();
 	R_CreateUpdateLightmapPipelines ();
 	R_CreateIndirectComputePipelines ();
-	R_CreateRayDebugPipelines ();
-
 	R_DestroyShaderModules ();
 }
 
@@ -3636,8 +3455,6 @@ void R_Init (void)
 	Cvar_SetCallback (&r_slimealpha, R_SetSlimealpha_f);
 
 	Cvar_RegisterVariable (&r_gpulightmapupdate);
-	Cvar_RegisterVariable (&r_rtshadows);
-	Cvar_SetCallback (&r_rtshadows, R_SetRTShadows_f);
 	Cvar_RegisterVariable (&r_indirect);
 	Cvar_RegisterVariable (&r_tasks);
 	Cvar_RegisterVariable (&r_parallelmark);
@@ -3884,7 +3701,6 @@ void R_NewMap (void)
 
 		GL_BuildLightmaps ();
 		GL_BuildBModelVertexBuffer ();
-		GL_BuildBModelAccelerationStructures ();
 		GL_PrepareSIMDAndParallelData ();
 		GL_SetupIndirectDraws ();
 		GL_SetupLightmapCompute ();

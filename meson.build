@@ -31,7 +31,6 @@ shaders = [
     'Shaders/update_lightmap_rt.comp',
     'Shaders/world.frag',
     'Shaders/world.vert',
-    'Shaders/ray_debug.comp',
 ]
 
 glslang = find_program('glslangValidator')
