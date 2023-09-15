@@ -2579,8 +2579,11 @@ static qboolean M_Quit_TextEntry (void)
 static void M_Quit_Draw (cb_context_t *cbx) // johnfitz -- modified for new quit message
 {
 	char msg1[40];
-	char msg2[] = "by Axel Gneiting"; /* msg2/msg3 are mostly [40] */
-	char msg3[] = "Press y to quit";
+	char msg2[] = "-------------------------";
+	char msg3[] = "vkQuake by Axel Gneiting"; /* msg2/msg3 are mostly [40] */
+	char msg4[] = "& vkMacQuake developers";
+	char msg5[] = "-------------------------";
+	char msg6[] = "Press y to quit";
 	int	 boxlen;
 
 	if (was_in_menus)
@@ -2591,20 +2594,23 @@ static void M_Quit_Draw (cb_context_t *cbx) // johnfitz -- modified for new quit
 		m_state = m_quit;
 	}
 
-	q_snprintf (msg1, sizeof (msg1), "vkQuake " VKQUAKE_VER_STRING);
+	q_snprintf (msg1, sizeof (msg1), "vkMacQuake " VKQUAKE_VER_STRING);
 
 	// okay, this is kind of fucked up.  M_DrawTextBox will always act as if
 	// width is even. Also, the width and lines values are for the interior of the box,
 	// but the x and y values include the border.
-	boxlen = q_max (strlen (msg1), q_max ((sizeof (msg2) - 1), (sizeof (msg3) - 1))) + 1;
+	boxlen = q_max (strlen (msg1), q_max ((sizeof (msg2) - 1), (sizeof (msg6) - 1))) + 1;
 	if (boxlen & 1)
 		boxlen++;
-	M_DrawTextBox (cbx, 160 - 4 * (boxlen + 2), 76, boxlen, 4);
+	M_DrawTextBox (cbx, 160 - 4 * (boxlen + 2), 76, boxlen, 8);
 
 	// now do the text
 	M_Print (cbx, 160 - 4 * strlen (msg1), 88, msg1);
 	M_Print (cbx, 160 - 4 * (sizeof (msg2) - 1), 96, msg2);
-	M_PrintWhite (cbx, 160 - 4 * (sizeof (msg3) - 1), 104, msg3);
+	M_Print (cbx, 160 - 4 * (sizeof (msg3) - 1), 106, msg3);
+	M_Print (cbx, 160 - 4 * (sizeof (msg4) - 1), 116, msg4);
+	M_Print (cbx, 160 - 4 * (sizeof (msg5) - 1), 126, msg5);
+	M_PrintWhite (cbx, 160 - 4 * (sizeof (msg6) - 1), 136, msg6);
 }
 
 //=============================================================================
@@ -3573,15 +3579,7 @@ void M_Draw (cb_context_t *cbx)
 		break;
 
 	case m_quit:
-		if (!fitzmode)
-		{ /* QuakeSpasm customization: */
-			/* Quit now! S.A. */
-			m_is_quitting = true;
-			key_dest = key_console;
-			Cbuf_InsertText ("quit");
-		}
-		else
-			M_Quit_Draw (cbx);
+		M_Quit_Draw (cbx);
 		break;
 
 	case m_lanconfig:
