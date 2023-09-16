@@ -858,6 +858,11 @@ static void GL_InitDevice (void)
 	err = vkEnumeratePhysicalDevices (vulkan_instance, &physical_device_count, NULL);
 	if (err != VK_SUCCESS || physical_device_count == 0)
 		Sys_Error ("Couldn't find any Vulkan devices");
+    
+    // Vulkan Information for macOS GPU information
+    uint32_t deviceCount = 0;
+    vkEnumeratePhysicalDevices(vulkan_instance, &deviceCount, NULL);
+    Sys_Printf("Number of GPU Cores: %u\n", deviceCount);
 
 	arg_index = COM_CheckParm ("-device");
 	if (arg_index && (arg_index < (com_argc - 1)))
