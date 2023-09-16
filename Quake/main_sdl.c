@@ -71,19 +71,10 @@ int main (int argc, char *argv[])
 
 	Sys_Init ();
 
-	Sys_Printf ("Detected %d CPUs.\n", SDL_GetCPUCount ());
-	Sys_Printf ("Initializing vkQuake v%s\n", VKQUAKE_VER_STRING);
-#if defined(__clang_version__)
-	Sys_Printf ("Built with Clang " __clang_version__ "\n");
-#elif defined(__GNUC__)
-	Sys_Printf ("Built with GCC %u.%u.%u\n", __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
-#elif defined(_MSC_FULL_VER)
-	Sys_Printf ("Built with Microsoft C %u\n", _MSC_FULL_VER);
-#else
-	Sys_Printf ("Built with unknown compiler\n");
-#endif
-
-	Sys_Printf ("Host_Init\n");
+    Con_Printf ("Detected %d CPUs.\n", SDL_GetCPUCount ());
+    Con_Printf ("Initializing vkQuake v%s\n", VKQUAKE_VER_STRING);
+    Con_Printf ("Built with Clang " __clang_version__ "\n");
+    Con_Printf ("Host_Init\n");
 	Host_Init ();
 
 	oldtime = Sys_DoubleTime ();

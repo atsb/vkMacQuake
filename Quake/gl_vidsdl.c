@@ -862,7 +862,21 @@ static void GL_InitDevice (void)
     // Vulkan Information for macOS GPU information
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(vulkan_instance, &deviceCount, NULL);
-    Sys_Printf("Number of GPU Cores: %u\n", deviceCount);
+    Con_Printf("Number of GPU Cores: %u\n", deviceCount);
+    
+    // Retrieve and print GPU information
+    for (uint32_t i = 0; i < deviceCount; i++) {
+        VkPhysicalDevice physicalDevice;
+        vkEnumeratePhysicalDevices(vulkan_instance, &deviceCount, &physicalDevice);
+
+        VkPhysicalDeviceProperties deviceProperties;
+        vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+
+        Con_Printf("GPU %u:\n", i + 1);
+        Con_Printf("GPU Name: %s\n", deviceProperties.deviceName);
+        Con_Printf("Driver Version: %u\n", deviceProperties.driverVersion);
+        Con_Printf("\n");
+    }
 
 	arg_index = COM_CheckParm ("-device");
 	if (arg_index && (arg_index < (com_argc - 1)))
