@@ -640,7 +640,7 @@ static void PF_sound (void)
 
 	if (!*sample)
 	{
-		PR_RunWarning ("PF_sound: empty string\n");
+		printf ("PF_sound: empty string\n");
 		return;
 	}
 
